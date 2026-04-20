@@ -21,11 +21,12 @@ from iphone_connection import connect_camera, read_frame
 PROJECT_ROOT = Path(__file__).resolve().parent
 MARKERS_DIR = PROJECT_ROOT / "markers"
 CALIBRATION_FILE = PROJECT_ROOT / "camera_calibration.npz"
-SOURCE = 0
+SOURCE = 1
 MARKER_PATTERN = re.compile(
     r"(?P<family>\d+x\d+_\d+)-(?P<marker_id>\d+)(?:_(?P<size_mm>\d+)mm)?(?:_[^.]+)*\.(svg|png|jpg|jpeg)$",
     re.IGNORECASE,
 )
+
 CAMERA_HEIGHT = 895.0  # in mm
 DISTANCE_SCALE_CORRECTION = 0.771
 DEFAULT_MARKER_SIZE_MM: float | None = 55.0
@@ -33,7 +34,7 @@ REFERENCE_MARKER = ("4x4_1000", 4)
 TARGET_MARKER = ("4x4_1000", 0)
 MARKER_SIZE_MM_BY_ID: dict[tuple[str, int], float] = {
     ("4x4_1000", 4): 56.0,
-    ("4x4_1000", 0): 29.0
+    ("4x4_1000", 2): 29.0
 }
 
 

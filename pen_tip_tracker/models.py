@@ -54,9 +54,6 @@ class DetectedMarker:
 
 @dataclass
 class LastPenMarkerState:
-    mx: float
-    my: float
-    pixels_per_mm: float
     marker_yaw_aligned: float
 
 

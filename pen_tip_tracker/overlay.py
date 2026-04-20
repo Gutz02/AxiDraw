@@ -119,20 +119,20 @@ def draw_runtime_overlay(
 
     if pen_height_cm is not None:
         text_y = 180 if relative_xy_mm is not None else 150
-        cv2.putText(
-            frame,
-            (
-                f"a = cos({pen_height_cm:.2f}/{runtime_state.pen_length_mm / 10.0:.2f})="
-                f"{math.degrees(math.acos(pen_height_cm / (runtime_state.pen_length_mm / 10.0))):.2f} deg | "
-                f"Radius : {math.sqrt((runtime_state.pen_length_mm / 10.0) ** 2 - pen_height_cm ** 2):.1f}cm"
-            ),
-            (20, text_y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
-            (0, 200, 255),
-            2,
-            cv2.LINE_AA,
-        )
+        # cv2.putText(
+        #     frame,
+        #     (
+        #         f"a = cos({pen_height_cm:.2f}/{runtime_state.pen_length_mm / 10.0:.2f})="
+        #         f"{math.degrees(math.acos(pen_height_cm / (runtime_state.pen_length_mm / 10.0))):.2f} deg | "
+        #         f"Radius : cm"
+        #     ),
+        #     (20, text_y),
+        #     cv2.FONT_HERSHEY_SIMPLEX,
+        #     0.55,
+        #     (0, 200, 255),
+        #     2,
+        #     cv2.LINE_AA,
+        # )
 
     if tip_debug_values is not None:
         text_y = 210 if relative_xy_mm is not None else 180

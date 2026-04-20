@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
-from .settings import CAMERA_HEIGHT_CM
+from .settings import CAMERA_HEIGHT_MM
 
 
 @dataclass
@@ -87,6 +87,15 @@ def undistort_marker_corners(
     )
     return undistorted.reshape((4, 2)).astype(np.float32)
 
+def tip_wrt_marker(pen_length_mm: float, phi: float, theta: float):
+    pen_height_mm = (pen_length_mm) * math.cos(phi) * math.cos(theta)
+    radius_mm = math.sqrt(max(0.0, pen_length_mm ** 2 - pen_height_mm ** 2))
+    alpha = math.atan2(-math.sin(phi) * math.cos(theta), math.sin(theta))
+    tx = radius_mm*math.sin(alpha)
+    ty = radius_mm*math.cos(alpha)
+    tz = -pen_height_mm
+    return np.array([tx, ty, tz], dtype=np.float32)
+
 
 def project_tip(
     mx: float,
@@ -101,31 +110,28 @@ def project_tip(
     theta: float,
     yaw_aligned: float,
 ) -> TipProjection:
-    pen_height_cm = (pen_length_mm / 10.0) * math.cos(phi) * math.cos(theta)
-    marker_height_ratio = pen_height_cm / CAMERA_HEIGHT_CM
+    pen_height_mm = (pen_length_mm) * math.cos(phi) * math.cos(theta)
+    marker_height_ratio = pen_height_mm / CAMERA_HEIGHT_MM
     mx_corrected = mx - (mx - frame_center_x) * marker_height_ratio
     my_corrected = my - (my - frame_center_y) * marker_height_ratio
-    sensor_offset_x_px = sensor_offset_x_mm * pixels_per_mm
-    sensor_offset_y_px = sensor_offset_y_mm * pixels_per_mm
-    radius_cm = math.sqrt(max(0.0, (pen_length_mm / 10.0) ** 2 - pen_height_cm ** 2))
-    radius_px = radius_cm * pixels_per_mm * 10.0
+    radius_mm = math.sqrt(max(0.0, pen_length_mm ** 2 - pen_height_mm ** 2))
     tip_x, tip_y, tip_dx, tip_dy = pen_tip(
         mx_corrected,
         my_corrected,
         phi,
         theta,
         yaw_aligned,
-        radius_px,
-        sensor_offset_x_px,
-        sensor_offset_y_px,
+        radius_mm,
+        sensor_offset_x_mm,
+        sensor_offset_y_mm,
     )
     return TipProjection(
         tip_x=tip_x,
         tip_y=tip_y,
         tip_dx=tip_dx,
         tip_dy=tip_dy,
-        radius_px=radius_px,
+        radius_px=radius_mm,
         mx_corrected=mx_corrected,
         my_corrected=my_corrected,
-        pen_height_cm=pen_height_cm,
+        pen_height_cm=pen_height_mm,
     )

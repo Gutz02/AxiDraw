@@ -10,19 +10,27 @@ from aruco_marker_detection import (
     CALIBRATION_FILE,
     DISTANCE_SCALE_CORRECTION,
     REFERENCE_MARKER,
+    TARGET_MARKER,
     SOURCE,
     build_camera_matrix,
     load_camera_calibration,
+    pose_to_transform,
 )
 from iphone_connection import connect_camera, read_frame
 
 from .controls import handle_runtime_key
-from .geometry import marker_center_and_scale, project_tip, undistort_marker_corners, wrap_angle_rad
+from .geometry import tip_wrt_marker, wrap_angle_rad
 from .imu import snapshot_imu_state, snapshot_kalman_tuning, start_imu_thread
 from .models import ImuState, KalmanTuning, LastPenMarkerState, TrackerRuntimeState
 from .overlay import draw_header, draw_runtime_overlay, draw_waiting_overlay
 from .settings import WINDOW_TITLE
-from .vision import compute_pose_alignment, detect_markers, load_detector_context, print_vision_snapshot
+from .vision import (
+    compute_pose_alignment,
+    detect_markers,
+    find_marker,
+    load_detector_context,
+    print_vision_snapshot,
+)
 
 
 def load_camera_setup() -> tuple[np.ndarray | None, np.ndarray, float, tuple[int, int] | None]:
@@ -111,153 +119,60 @@ def update_pen_tip_overlay(
     camera_matrix: np.ndarray,
     dist_coeffs: np.ndarray,
     runtime_state: TrackerRuntimeState,
-    frame_center_x: float,
-    frame_center_y: float,
     imu_snapshot: ImuState,
     imu_roll_avg_deg: float,
     imu_pitch_avg_deg: float,
     pen_marker_relative_yaw: float | None,
 ) -> tuple[float | None, tuple[float, float, float, float] | None]:
-    tip_debug_values: tuple[float, float, float, float] | None = None
-    pen_height_cm: float | None = None
-    marker_seen = False
     phi = math.radians(imu_roll_avg_deg)
     theta = math.radians(imu_pitch_avg_deg)
+    current_marker_yaw_aligned: float | None = None
+    if pen_marker_relative_yaw is not None:
+        if not runtime_state.marker_offsets_initialized:
+            runtime_state.marker_yaw_offset = pen_marker_relative_yaw
+            runtime_state.imu_roll_offset_deg = imu_snapshot.roll_deg
+            runtime_state.imu_pitch_offset_deg = imu_snapshot.pitch_deg
+            runtime_state.marker_offsets_initialized = True
+        current_marker_yaw_aligned = wrap_angle_rad(
+            pen_marker_relative_yaw - runtime_state.marker_yaw_offset
+        )
+    elif runtime_state.last_pen_marker_state is not None:
+        current_marker_yaw_aligned = runtime_state.last_pen_marker_state.marker_yaw_aligned
 
-    for entry in detected_markers:
-        if (entry.family, entry.marker_id) != REFERENCE_MARKER or entry.marker_size_mm is None:
-            continue
+    if current_marker_yaw_aligned is None:
+        return None, None
 
-        corrected_pts = undistort_marker_corners(entry.corners, camera_matrix, dist_coeffs)
-        mx, my, pixels_per_mm = marker_center_and_scale(corrected_pts, float(entry.marker_size_mm))
-        if pixels_per_mm <= 0.0:
-            continue
+    pen_marker = find_marker(detected_markers, TARGET_MARKER)
+    if pen_marker is None:
+        return None, None
 
-        current_marker_yaw_aligned: float | None = None
-        if pen_marker_relative_yaw is not None:
-            if not runtime_state.marker_offsets_initialized:
-                runtime_state.marker_yaw_offset = pen_marker_relative_yaw
-                runtime_state.imu_roll_offset_deg = imu_snapshot.roll_deg
-                runtime_state.imu_pitch_offset_deg = imu_snapshot.pitch_deg
-                runtime_state.marker_offsets_initialized = True
-            current_marker_yaw_aligned = wrap_angle_rad(
-                pen_marker_relative_yaw - runtime_state.marker_yaw_offset
-            )
-        elif runtime_state.last_pen_marker_state is not None:
-            current_marker_yaw_aligned = runtime_state.last_pen_marker_state.marker_yaw_aligned
+    runtime_state.last_pen_marker_state = LastPenMarkerState(
+        marker_yaw_aligned=current_marker_yaw_aligned,
+    )
 
-        if current_marker_yaw_aligned is None:
-            continue
+    tip_wrt_marker_vec = tip_wrt_marker(runtime_state.pen_length_mm, phi, theta)
+    print(tip_wrt_marker_vec)
+    camera_from_marker = pose_to_transform(pen_marker.rvec, pen_marker.tvec)
+    tip_wrt_marker_h = np.array(
+        [tip_wrt_marker_vec[0], tip_wrt_marker_vec[1], tip_wrt_marker_vec[2], 1.0],
+        dtype=np.float64,
+    )
+    tip_wrt_camera_h = camera_from_marker @ tip_wrt_marker_h
+    tip_wrt_camera = tip_wrt_camera_h[:3].astype(np.float32).reshape(1, 1, 3)
 
-        projection = project_tip(
-            mx=mx,
-            my=my,
-            pixels_per_mm=pixels_per_mm,
-            frame_center_x=frame_center_x,
-            frame_center_y=frame_center_y,
-            pen_length_mm=runtime_state.pen_length_mm,
-            sensor_offset_x_mm=runtime_state.sensor_offset_x_mm,
-            sensor_offset_y_mm=runtime_state.sensor_offset_y_mm,
-            phi=phi,
-            theta=theta,
-            yaw_aligned=current_marker_yaw_aligned,
-        )
-        runtime_state.last_pen_marker_state = LastPenMarkerState(
-            mx=mx,
-            my=my,
-            pixels_per_mm=pixels_per_mm,
-            marker_yaw_aligned=current_marker_yaw_aligned,
-        )
-        marker_seen = True
-        pen_height_cm = projection.pen_height_cm
-        tip_debug_values = (
-            projection.mx_corrected,
-            projection.my_corrected,
-            projection.tip_dx,
-            projection.tip_dy,
-        )
+    image_points, _ = cv2.projectPoints(
+        tip_wrt_camera,
+        np.zeros((3, 1), dtype=np.float32),
+        np.zeros((3, 1), dtype=np.float32),
+        camera_matrix,
+        dist_coeffs,
+    )
+    u, v = image_points.reshape(2)
+    print(u,v)
+    if 0.0 <= u < frame.shape[1] and 0.0 <= v < frame.shape[0]:
+        cv2.circle(frame, (int(round(u)), int(round(v))), 4, (0, 0, 255), -1)
 
-        cv2.circle(
-            frame,
-            (int(round(mx)), int(round(my))),
-            int(round(projection.radius_px)),
-            color=(255, 0, 255),
-            thickness=1,
-        )
-        draw_angle_indicator(
-            frame,
-            (int(round(mx)), int(round(my))),
-            projection.radius_px,
-            current_marker_yaw_aligned,
-        )
-        cv2.circle(
-            frame,
-            (int(round(projection.tip_x)), int(round(projection.tip_y))),
-            2,
-            (0, 0, 255),
-            -1,
-        )
-        cv2.line(
-            frame,
-            (int(round(mx)), int(round(my))),
-            (int(round(projection.tip_x)), int(round(projection.tip_y))),
-            (0, 0, 255),
-            2,
-        )
-        break
-
-    if not marker_seen and runtime_state.last_pen_marker_state is not None:
-        cached = runtime_state.last_pen_marker_state
-        projection = project_tip(
-            mx=cached.mx,
-            my=cached.my,
-            pixels_per_mm=cached.pixels_per_mm,
-            frame_center_x=frame_center_x,
-            frame_center_y=frame_center_y,
-            pen_length_mm=runtime_state.pen_length_mm,
-            sensor_offset_x_mm=runtime_state.sensor_offset_x_mm,
-            sensor_offset_y_mm=runtime_state.sensor_offset_y_mm,
-            phi=phi,
-            theta=theta,
-            yaw_aligned=cached.marker_yaw_aligned,
-        )
-        pen_height_cm = projection.pen_height_cm
-        tip_debug_values = (
-            projection.mx_corrected,
-            projection.my_corrected,
-            projection.tip_dx,
-            projection.tip_dy,
-        )
-
-        cv2.circle(
-            frame,
-            (int(round(cached.mx)), int(round(cached.my))),
-            int(round(projection.radius_px)),
-            color=(120, 0, 255),
-            thickness=1,
-        )
-        draw_angle_indicator(
-            frame,
-            (int(round(cached.mx)), int(round(cached.my))),
-            projection.radius_px,
-            cached.marker_yaw_aligned,
-        )
-        cv2.circle(
-            frame,
-            (int(round(projection.tip_x)), int(round(projection.tip_y))),
-            2,
-            (0, 0, 255),
-            -1,
-        )
-        cv2.line(
-            frame,
-            (int(round(cached.mx)), int(round(cached.my))),
-            (int(round(projection.tip_x)), int(round(projection.tip_y))),
-            (0, 0, 255),
-            2,
-        )
-
-    return pen_height_cm, tip_debug_values
+    return None, None
 
 
 def print_snapshot(
@@ -309,7 +224,6 @@ def print_snapshot(
 def main() -> None:
     detector_context = load_detector_context()
     camera_matrix, dist_coeffs, distance_scale, calibration_frame_size = load_camera_setup()
-    print(dist_coeffs)
     capture = connect_camera(source=SOURCE, width=1280, height=720)
     camera_matrix_scaled = False
 
@@ -319,6 +233,7 @@ def main() -> None:
     kalman_tuning_lock = threading.Lock()
     runtime_state = TrackerRuntimeState()
     stop_event = threading.Event()
+    
     imu_thread = start_imu_thread(
         stop_event,
         imu_state,
@@ -369,9 +284,7 @@ def main() -> None:
                 detected_markers,
                 distance_scale,
             )
-
             draw_header(frame, total)
-
             imu_roll_avg_deg = 0.0
             imu_pitch_avg_deg = 0.0
             pen_height_cm: float | None = None
@@ -389,10 +302,8 @@ def main() -> None:
                     frame=frame,
                     detected_markers=detected_markers,
                     camera_matrix=camera_matrix,
-                    dist_coeffs=dist_coeffs,
                     runtime_state=runtime_state,
-                    frame_center_x=frame_center_x,
-                    frame_center_y=frame_center_y,
+                    dist_coeffs=dist_coeffs,
                     imu_snapshot=imu_snapshot,
                     imu_roll_avg_deg=imu_roll_avg_deg,
                     imu_pitch_avg_deg=imu_pitch_avg_deg,

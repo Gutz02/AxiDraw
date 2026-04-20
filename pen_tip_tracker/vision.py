@@ -8,6 +8,7 @@ import numpy as np
 from aruco_marker_detection import (
     MARKERS_DIR,
     REFERENCE_MARKER,
+    TARGET_MARKER,
     estimate_marker_pose,
     family_to_opencv_constant,
     load_expected_markers,
@@ -173,28 +174,26 @@ def compute_pose_alignment(
     detected_markers: list[DetectedMarker],
     distance_scale: float,
 ) -> tuple[tuple[float, float] | None, float | None]:
-    pen_marker_entry = find_marker(detected_markers, REFERENCE_MARKER)
-    yaw_reference_entry = find_marker(detected_markers, XY_TARGET_MARKER)
-    if pen_marker_entry is None or yaw_reference_entry is None:
+    pen_marker_entry = find_marker(detected_markers, TARGET_MARKER)
+    reference_marker = find_marker(detected_markers, REFERENCE_MARKER)
+    if pen_marker_entry is None or reference_marker is None:
         return None, None
 
-    relative_pose = relative_transform(
+    # this makes the pen marker in the frame of the reference marker
+    pen_marker_in_reference_pose = relative_transform(# This returns a 4x4 matrix
+        reference_marker.rvec,
+        reference_marker.tvec,
         pen_marker_entry.rvec,
         pen_marker_entry.tvec,
-        yaw_reference_entry.rvec,
-        yaw_reference_entry.tvec,
     )
-    _relative_rvec, relative_tvec = transform_to_pose(relative_pose)
+    
+    _relative_rvec, relative_tvec = transform_to_pose(pen_marker_in_reference_pose) # This converts the 4x4 matrix to rvec and tvec, where tvec is a 3x1 vector representing translation in x, y, z
+    
     relative_xy_mm = (
         float(relative_tvec[0][0]) * distance_scale,
         float(relative_tvec[1][0]) * distance_scale,
     )
-    pen_marker_in_reference_pose = relative_transform(
-        yaw_reference_entry.rvec,
-        yaw_reference_entry.tvec,
-        pen_marker_entry.rvec,
-        pen_marker_entry.tvec,
-    )
+    
     pen_marker_relative_yaw = planar_yaw_from_transform(pen_marker_in_reference_pose)
     return relative_xy_mm, pen_marker_relative_yaw
 

@@ -21,7 +21,7 @@ from iphone_connection import connect_camera, read_frame
 PROJECT_ROOT = Path(__file__).resolve().parent
 MARKERS_DIR = PROJECT_ROOT / "markers"
 CALIBRATION_FILE = PROJECT_ROOT / "camera_calibration.npz"
-SOURCE = 1
+SOURCE = 0
 MARKER_PATTERN = re.compile(
     r"(?P<family>\d+x\d+_\d+)-(?P<marker_id>\d+)(?:_(?P<size_mm>\d+)mm)?(?:_[^.]+)*\.(svg|png|jpg|jpeg)$",
     re.IGNORECASE,
@@ -30,8 +30,8 @@ MARKER_PATTERN = re.compile(
 CAMERA_HEIGHT = 895.0  # in mm
 DISTANCE_SCALE_CORRECTION = 0.771
 DEFAULT_MARKER_SIZE_MM: float | None = 55.0
-REFERENCE_MARKER = ("4x4_1000", 4)
-TARGET_MARKER = ("4x4_1000", 0)
+REFERENCE_MARKER = ("4x4_1000", 2)
+TARGET_MARKER = ("4x4_1000", 4)
 MARKER_SIZE_MM_BY_ID: dict[tuple[str, int], float] = {
     ("4x4_1000", 4): 56.0,
     ("4x4_1000", 2): 29.0
@@ -167,6 +167,10 @@ def euler_angles_deg(rvec: np.ndarray) -> tuple[float, float, float]:
 
     return tuple(math.degrees(angle) for angle in (roll, pitch, yaw))
 
+def transform_to_pose(transform: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    rvec, _ = cv2.Rodrigues(transform[:3, :3])
+    tvec = transform[:3, 3].reshape(3, 1)
+    return rvec, tvec
 
 def pose_to_transform(rvec: np.ndarray, tvec: np.ndarray) -> np.ndarray:
     rotation_matrix, _ = cv2.Rodrigues(rvec)
@@ -174,13 +178,6 @@ def pose_to_transform(rvec: np.ndarray, tvec: np.ndarray) -> np.ndarray:
     transform[:3, :3] = rotation_matrix
     transform[:3, 3] = tvec.reshape(3)
     return transform
-
-
-def transform_to_pose(transform: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    rvec, _ = cv2.Rodrigues(transform[:3, :3])
-    tvec = transform[:3, 3].reshape(3, 1)
-    return rvec, tvec
-
 
 def relative_transform(
     reference_rvec: np.ndarray,

@@ -1,0 +1,5 @@
+calibration_captures/*
+pen_tip_tracker_vector_recordings/*
+videos_images/*
+*.npz
+
